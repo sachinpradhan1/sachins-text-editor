@@ -945,6 +945,8 @@
             </span>
         </div>
         <div class="presets">
+            <button class="preset-btn" data-preset="karaokeStack" style="border-color:#ffd600; color:#ffd600; font-weight:700;">🔥 Layering Reel</button>
+            <button class="preset-btn" data-preset="hookCard">📌 Hook Card</button>
             <button class="preset-btn" data-preset="multiRemix">Multi-Motion Remix</button>
             <button class="preset-btn" data-preset="kineticScroll">Kinetic Reel (Green/Red)</button>
             <button class="preset-btn" data-preset="cream3d">3D Perspective (Cream)</button>
@@ -966,21 +968,22 @@
                     <span>Lyrics & Time-Lapse Input</span>
                 </div>
                 <div class="quick-samples">
-                    <span class="sample-chip" id="load-sample-timed">Sample: Timestamps (0.1s)</span>
+                    <span class="sample-chip" id="load-sample-layering" style="border-color:#ffd600; color:#ffd600; font-weight:700;">🔥 Viral Layering Reel</span>
+                    <span class="sample-chip" id="load-sample-timed">Sample: Timestamps</span>
                     <span class="sample-chip" id="load-sample-2">Ref 2: Motion Graphics</span>
                     <span class="sample-chip" id="load-sample-1">Ref 1: Knock Knock</span>
                 </div>
                 <div class="control-group">
-                    <textarea id="in-lyrics" spellcheck="false">0.1 Do
-0.3 you
-0.6 <green>want</green>
-0.9 TO create
-1.4 this type of
-1.9 motion
-2.3 graphic
-2.7 then
-3.1 <red>SUBSCRIBE</red>
-3.6 to this channel</textarea>
+                    <textarea id="in-lyrics" spellcheck="false">0.10 Main
+0.35 gaane
+0.65 likhta <color:#ffd600>tha</color>
+1.05 toh mere ko
+1.45 achhi <color:#ffd600>baat</color>
+1.90 ye lagti hai ki
+2.45 main dono
+2.85 <color:#ffd600>cheezein</color>
+3.35 karta
+3.75 <color:#ffd600>poetry</color></textarea>
                 </div>
 
                 <!-- 5 USER-CONFIGURABLE PALETTE SLOTS & WORD STYLER -->
@@ -1264,6 +1267,24 @@
             <div class="section">
                 <div class="section-header">Animation Styles</div>
                 <div class="style-list" id="style-group">
+                    <!-- Layering Karaoke Stack (Viral Reels) -->
+                    <div class="style-card active" data-val="karaokeStack">
+                        <div class="style-badge" style="background: linear-gradient(135deg, #ffd600, #ff6b00); color: black; font-weight:900;">🔥 KS</div>
+                        <div class="style-info">
+                            <span class="style-name">Layering Karaoke Stack (Viral Reels)</span>
+                            <span class="style-desc">3-tier growing stack: spoken word pop, huge peak line & aging tiers</span>
+                        </div>
+                    </div>
+
+                    <!-- Headline Hook Card -->
+                    <div class="style-card" data-val="hookCard">
+                        <div class="style-badge" style="background: #3b82f6; color: white; font-weight:700;">📌 HC</div>
+                        <div class="style-info">
+                            <span class="style-name">Headline Hook Card (Intro / Swash)</span>
+                            <span class="style-desc">Bold headline block with corner sparkle stars & accent underline</span>
+                        </div>
+                    </div>
+
                     <!-- Multi-Motion Remix -->
                     <div class="style-card" data-val="multiMotion">
                         <div class="style-badge" style="background: linear-gradient(135deg, #a855f7, #ec4899); color: white;">⚡</div>
@@ -1274,7 +1295,7 @@
                     </div>
 
                     <!-- Dynamic Kinetic Scroll -->
-                    <div class="style-card active" data-val="kineticScroll">
+                    <div class="style-card" data-val="kineticScroll">
                         <div class="style-badge" style="background: #00e600; color: black;">KS</div>
                         <div class="style-info">
                             <span class="style-name">Dynamic Kinetic Scroll</span>
@@ -1609,14 +1630,14 @@
             aspectRatio: '9:16',
             canvasWidth: 1080,
             canvasHeight: 1920,
-            style: 'kineticScroll',
-            verticalAlign: 'center', // 'top' | 'center' | 'bottom'
+            style: 'karaokeStack',
+            verticalAlign: 'bottom', // 'top' | 'center' | 'bottom'
             yOffset: 0,
             xOffset: 0,
             font: { family: 'Inter', weight: 900, size: 84 },
-            colors: { primary: '#111111', accent: '#00e600' },
-            stroke: { enabled: false, color: '#000000', width: 6 },
-            shadow: { enabled: false, color: 'rgba(0,0,0,0.85)', blur: 12, offsetX: 3, offsetY: 4 },
+            colors: { primary: '#ffffff', accent: '#ffd600' },
+            stroke: { enabled: true, color: '#000000', width: 5 },
+            shadow: { enabled: true, color: 'rgba(0,0,0,0.85)', blur: 14, offsetX: 2, offsetY: 4 },
             box: { enabled: false, color: 'rgba(0,0,0,0.75)', radius: 10, paddingX: 20, paddingY: 10 },
             background: {
                 type: 'offwhite',
@@ -2362,7 +2383,34 @@
         //  PRESETS & SAMPLES
         // ============================================================
         function applyPreset(id) {
-            if (id === 'multiRemix') {
+            if (id === 'karaokeStack') {
+                AppState.style = 'karaokeStack';
+                AppState.verticalAlign = 'bottom';
+                AppState.colors = { primary: '#ffffff', accent: '#ffd600' };
+                AppState.font = { family: 'Inter', weight: 900, size: 84 };
+                AppState.stroke = { enabled: true, color: '#000000', width: 5 };
+                AppState.shadow = { enabled: true, color: 'rgba(0,0,0,0.85)', blur: 14, offsetX: 2, offsetY: 4 };
+                document.getElementById('in-lyrics').value = `0.10 Main
+0.35 gaane
+0.65 likhta <color:#ffd600>tha</color>
+1.05 toh mere ko
+1.45 achhi <color:#ffd600>baat</color>
+1.90 ye lagti hai ki
+2.45 main dono
+2.85 <color:#ffd600>cheezein</color>
+3.35 karta
+3.75 <color:#ffd600>poetry</color>`;
+            } else if (id === 'hookCard') {
+                AppState.style = 'hookCard';
+                AppState.verticalAlign = 'center';
+                AppState.colors = { primary: '#ffffff', accent: '#ffd600' };
+                AppState.font = { family: 'Inter', weight: 900, size: 88 };
+                AppState.stroke = { enabled: true, color: '#000000', width: 5 };
+                AppState.shadow = { enabled: true, color: 'rgba(0,0,0,0.85)', blur: 14, offsetX: 2, offsetY: 4 };
+                document.getElementById('in-lyrics').value = `0.10 MAKE VIRAL REELS
+0.60 WITH DYNAMIC CAPTIONS
+1.20 IN SECONDS`;
+            } else if (id === 'multiRemix') {
                 AppState.style = 'multiMotion';
                 AppState.background.type = 'offwhite';
                 AppState.colors = { primary: '#111111', accent: '#00e600' };
@@ -2420,9 +2468,20 @@
             document.querySelectorAll('#style-group .style-card').forEach(c => {
                 c.classList.toggle('active', c.dataset.val === AppState.style);
             });
+            document.querySelectorAll('#valign-group .radio-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.val === AppState.verticalAlign);
+            });
             document.querySelectorAll('#bg-type-group .radio-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.val === AppState.background.type);
             });
+            const ts = document.getElementById('toggle-stroke');
+            if (ts) ts.classList.toggle('active', AppState.stroke.enabled);
+            const ss = document.getElementById('stroke-settings');
+            if (ss) ss.classList.toggle('hidden', !AppState.stroke.enabled);
+            const tsh = document.getElementById('toggle-shadow');
+            if (tsh) tsh.classList.toggle('active', AppState.shadow.enabled);
+            const shs = document.getElementById('shadow-settings');
+            if (shs) shs.classList.toggle('hidden', !AppState.shadow.enabled);
             document.getElementById('in-color-primary').value = AppState.colors.primary;
             document.getElementById('in-font-family').value = AppState.font.family;
             document.getElementById('in-font-weight').value = AppState.font.weight;
@@ -2444,6 +2503,10 @@
             });
 
             // Quick Samples
+            const sampleLayering = document.getElementById('load-sample-layering');
+            if (sampleLayering) {
+                sampleLayering.addEventListener('click', () => applyPreset('karaokeStack'));
+            }
             document.getElementById('load-sample-1').addEventListener('click', () => applyPreset('cream3d'));
             document.getElementById('load-sample-2').addEventListener('click', () => applyPreset('kineticScroll'));
             document.getElementById('load-sample-timed').addEventListener('click', () => {

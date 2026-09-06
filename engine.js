@@ -202,6 +202,36 @@ const TimingEngine = {
   },
 
   parseTimedInput(text) {
+    const trimmed = text.trim();
+    // 0. Detect JSON Transcript Format (Whisper, YouTube, etc.)
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        const json = JSON.parse(trimmed);
+        const rawList = Array.isArray(json) ? json : (json.words || json.segments || []);
+        if (Array.isArray(rawList) && rawList.length > 0) {
+          const tokens = [];
+          for (let i = 0; i < rawList.length; i++) {
+            const item = rawList[i];
+            const wordText = item.word || item.text || item.token || '';
+            if (!wordText || !wordText.trim()) continue;
+            const start = typeof item.start === 'number' ? item.start : parseFloat(item.start || 0);
+            const end = typeof item.end === 'number' ? item.end : (parseFloat(item.end || start + 0.35));
+            const parsed = this.parseWordMarkup(wordText.trim());
+            tokens.push(new LyricToken(parsed.text, start, end, {
+              wordIndex: i,
+              lineIndex: typeof item.line === 'number' ? item.line : Math.floor(i / 3),
+              color: item.color || parsed.color,
+              emphasis: item.emphasis || parsed.emphasis,
+              italic: parsed.italic
+            }));
+          }
+          if (tokens.length > 0) return tokens;
+        }
+      } catch (e) {
+        // Not valid JSON, fall back to line parser below
+      }
+    }
+
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const entries = [];
 
@@ -240,17 +270,41 @@ const TimingEngine = {
     }
 
     const tokens = [];
-    for (let i = 0; i < entries.length; i++) {
-      const cur = entries[i];
-      const nextTime = i < entries.length - 1 ? entries[i + 1].time : cur.time + 1.8;
-      const parsed = this.parseWordMarkup(cur.text);
+    let globalWordIdx = 0;
 
-      tokens.push(new LyricToken(parsed.text, cur.time, nextTime, {
-        wordIndex: i,
-        color: parsed.color,
-        emphasis: parsed.emphasis,
-        italic: parsed.italic
-      }));
+    for (let l = 0; l < entries.length; l++) {
+      const cur = entries[l];
+      const nextTime = l < entries.length - 1 ? entries[l + 1].time : cur.time + 1.8;
+      const lineDuration = Math.max(0.2, nextTime - cur.time);
+
+      // Split line into words while preserving markup tags like <color:#ffd600>word</color>
+      const wordsInLine = cur.text.match(/<[^>]+>.*?<\/[^>]+>|\S+/g) || [cur.text];
+
+      if (wordsInLine.length === 1) {
+        const parsed = this.parseWordMarkup(wordsInLine[0]);
+        tokens.push(new LyricToken(parsed.text, cur.time, nextTime, {
+          wordIndex: globalWordIdx++,
+          lineIndex: l,
+          color: parsed.color,
+          emphasis: parsed.emphasis,
+          italic: parsed.italic
+        }));
+      } else {
+        // Multi-word line: Distribute time across words in line
+        const wordSlot = lineDuration / wordsInLine.length;
+        for (let w = 0; w < wordsInLine.length; w++) {
+          const wStart = cur.time + w * wordSlot;
+          const wEnd = wStart + wordSlot * 0.95;
+          const parsed = this.parseWordMarkup(wordsInLine[w]);
+          tokens.push(new LyricToken(parsed.text, wStart, wEnd, {
+            wordIndex: globalWordIdx++,
+            lineIndex: l,
+            color: parsed.color,
+            emphasis: parsed.emphasis,
+            italic: parsed.italic
+          }));
+        }
+      }
     }
     return tokens;
   },
@@ -745,6 +799,510 @@ class LineStackStyle {
   }
 }
 
+// Style 10: Kinetic "Karaoke Stack" / Layering Caption (Viral Reels Style)
+class KaraokeStackStyle {
+  constructor() {
+    this.remixStyles = ['oneWord_scalePop', 'oneWord_slideUpBlur', 'oneWord_dropBounce'];
+  }
+
+  getState(token, currentTime, allTokens, W, H, settings) {
+    if (currentTime < token.startTime) return { visible: false };
+    const timeSince = currentTime - token.startTime;
+    const duration = token.getEffectiveEndTime() - token.startTime;
+    if (timeSince > duration + 1.2) return { visible: false };
+
+    const popT = Math.min(1, Math.max(0, timeSince / 0.16));
+    const scale = 0.75 + 0.25 * Easing.easeOutBack(popT, 2.0);
+    const opacity = Math.min(1, popT * 2.5);
+
+    const { cx, cy } = getBaseCoordinates(W, H, settings);
+    return {
+      x: cx,
+      y: cy,
+      scale,
+      rotation: 0,
+      opacity,
+      blur: 0,
+      color: token.color || settings.colors.primary || '#ffffff',
+      fontSize: settings.font.size || 84,
+      visible: opacity > 0.01
+    };
+  }
+
+  _buildStacks(tokens) {
+    if (!tokens || tokens.length === 0) return [];
+
+    // Step 1: Group tokens into lines
+    const lines = [];
+    let curLine = [];
+    let curLineIdx = -1;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      const hasExplicitLine = typeof tok.lineIndex === 'number' && tok.lineIndex >= 0;
+
+      if (hasExplicitLine) {
+        if (curLineIdx === -1) curLineIdx = tok.lineIndex;
+        if (tok.lineIndex !== curLineIdx && curLine.length > 0) {
+          lines.push(curLine);
+          curLine = [];
+          curLineIdx = tok.lineIndex;
+        }
+        curLine.push(tok);
+      } else {
+        curLine.push(tok);
+        const endsWithPunct = /[.,!?;:]$/.test(tok.text.trim());
+        const nextTok = i < tokens.length - 1 ? tokens[i + 1] : null;
+        const gap = nextTok ? (nextTok.startTime - tok.endTime) : 0;
+        if (curLine.length >= 3 || endsWithPunct || gap > 0.45) {
+          lines.push(curLine);
+          curLine = [];
+        }
+      }
+    }
+    if (curLine.length > 0) {
+      lines.push(curLine);
+    }
+
+    // Step 2: Group lines into stacks of max 3 lines (or break on gap > 0.75s or sentence end)
+    const stacks = [];
+    let curStackLines = [];
+
+    for (let l = 0; l < lines.length; l++) {
+      const line = lines[l];
+      curStackLines.push(line);
+
+      const isLastLine = l === lines.length - 1;
+      const nextLine = !isLastLine ? lines[l + 1] : null;
+      const lineEndTime = line[line.length - 1].getEffectiveEndTime();
+      const nextLineStartTime = nextLine ? nextLine[0].startTime : lineEndTime + 1;
+      const gap = nextLineStartTime - lineEndTime;
+      const lineEndsSentence = /[.!?]$/.test(line[line.length - 1].text.trim());
+
+      if (curStackLines.length >= 3 || lineEndsSentence || gap > 0.75 || isLastLine) {
+        const stackStartTime = curStackLines[0][0].startTime;
+        const lastLineOfStack = curStackLines[curStackLines.length - 1];
+        const stackEndTime = lastLineOfStack[lastLineOfStack.length - 1].getEffectiveEndTime() + 0.35;
+        stacks.push({
+          lines: curStackLines,
+          startTime: stackStartTime,
+          endTime: stackEndTime
+        });
+        curStackLines = [];
+      }
+    }
+
+    return stacks;
+  }
+
+  render(ctx, currentTime, tokens, W, H, settings) {
+    if (!tokens || tokens.length === 0) return;
+
+    const stacks = this._buildStacks(tokens);
+    if (stacks.length === 0) return;
+
+    const visibleStacks = stacks.filter(st => {
+      const enterStart = st.startTime - 0.15;
+      const exitEnd = st.endTime + 0.35;
+      return currentTime >= enterStart && currentTime <= exitEnd;
+    });
+
+    if (visibleStacks.length === 0) {
+      const lastStack = stacks[stacks.length - 1];
+      if (currentTime > lastStack.endTime && currentTime <= lastStack.endTime + 0.8) {
+        visibleStacks.push(lastStack);
+      }
+    }
+
+    const { cx, cy } = getBaseCoordinates(W, H, settings);
+    const baseFontSize = settings.font.size || 80;
+    const fontFamily = settings.font.family || 'Inter';
+    const fontWeight = settings.font.weight || 900;
+    const uppercase = !!settings.uppercase;
+    const accentColor = settings.colors.accent || '#ffd600';
+    const primaryColor = settings.colors.primary || '#ffffff';
+
+    for (const stack of visibleStacks) {
+      let stackOpacity = 1.0;
+      if (currentTime < stack.startTime) {
+        stackOpacity = Math.max(0, Math.min(1, (currentTime - (stack.startTime - 0.15)) / 0.15));
+      } else if (currentTime > stack.endTime) {
+        stackOpacity = Math.max(0, 1 - (currentTime - stack.endTime) / 0.35);
+      }
+      if (stackOpacity <= 0.01) continue;
+
+      const lines = stack.lines;
+      let activeLineIdx = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (currentTime >= lines[i][0].startTime) {
+          activeLineIdx = i;
+        }
+      }
+
+      const activeLine = lines[activeLineIdx];
+      const activeLineStartTime = activeLine[0].startTime;
+      const timeSinceActiveStart = currentTime - activeLineStartTime;
+      const transitionDuration = 0.20;
+      const transProgress = Math.min(1, Math.max(0, timeSinceActiveStart / transitionDuration));
+      const transEase = Easing.easeInOutCubic(transProgress);
+
+      const lineLayouts = [];
+
+      for (let l = 0; l < lines.length; l++) {
+        const line = lines[l];
+        const lineStartTime = line[0].startTime;
+        if (currentTime < lineStartTime - 0.1) continue;
+
+        let targetScale = 0.70;
+        let targetOpacity = 0.90;
+
+        if (l === activeLineIdx) {
+          if (activeLineIdx > 0 && timeSinceActiveStart < transitionDuration) {
+            targetScale = 0.70 + (1.38 - 0.70) * transEase;
+          } else {
+            targetScale = 1.38;
+          }
+          targetOpacity = 1.0;
+        } else if (l === activeLineIdx - 1) {
+          if (timeSinceActiveStart < transitionDuration) {
+            targetScale = 1.38 - (1.38 - 0.70) * transEase;
+            targetOpacity = 1.0 - 0.10 * transEase;
+          } else {
+            targetScale = 0.70;
+            targetOpacity = 0.88;
+          }
+        } else if (l < activeLineIdx) {
+          targetScale = 0.68;
+          targetOpacity = 0.80;
+        } else {
+          targetScale = 0.70;
+          targetOpacity = 0.85;
+        }
+
+        const lineFontSize = Math.round(baseFontSize * targetScale);
+        const lineHeight = lineFontSize * 1.28;
+
+        lineLayouts.push({
+          lineIndex: l,
+          words: line,
+          scale: targetScale,
+          fontSize: lineFontSize,
+          lineHeight,
+          opacity: targetOpacity * stackOpacity,
+          isActive: l === activeLineIdx
+        });
+      }
+
+      if (lineLayouts.length === 0) continue;
+
+      const activeLayout = lineLayouts.find(ly => ly.lineIndex === activeLineIdx) || lineLayouts[lineLayouts.length - 1];
+      const activeLayoutIndex = lineLayouts.indexOf(activeLayout);
+      const linePositions = [];
+      const activeBaseY = cy;
+
+      let currentUpY = activeBaseY;
+      for (let k = activeLayoutIndex; k >= 0; k--) {
+        const item = lineLayouts[k];
+        if (k === activeLayoutIndex) {
+          linePositions[k] = activeBaseY;
+        } else {
+          const nextDown = lineLayouts[k + 1];
+          currentUpY -= (item.lineHeight * 0.5 + nextDown.lineHeight * 0.5 + 14);
+          linePositions[k] = currentUpY;
+        }
+      }
+
+      let currentDownY = activeBaseY;
+      for (let k = activeLayoutIndex + 1; k < lineLayouts.length; k++) {
+        const item = lineLayouts[k];
+        const prevUp = lineLayouts[k - 1];
+        currentDownY += (prevUp.lineHeight * 0.5 + item.lineHeight * 0.5 + 14);
+        linePositions[k] = currentDownY;
+      }
+
+      let floatUpOffset = 0;
+      if (currentTime > stack.endTime) {
+        const exitT = (currentTime - stack.endTime) / 0.35;
+        floatUpOffset = -30 * Easing.easeOutCubic(exitT);
+      }
+
+      for (let k = 0; k < lineLayouts.length; k++) {
+        const item = lineLayouts[k];
+        const lineY = linePositions[k] + floatUpOffset;
+        const fontSize = item.fontSize;
+
+        ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", "Inter", -apple-system, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        const wordStates = [];
+        let totalLineWidth = 0;
+        const spaceW = ctx.measureText(' ').width;
+
+        for (let w = 0; w < item.words.length; w++) {
+          const tok = item.words[w];
+          if (currentTime < tok.startTime) continue;
+
+          let wordText = tok.text;
+          if (uppercase) wordText = wordText.toUpperCase();
+
+          const wordW = ctx.measureText(wordText).width;
+          const timeSinceWordStart = currentTime - tok.startTime;
+
+          let wordScale = 1.0;
+          let wordAlpha = 1.0;
+          if (timeSinceWordStart < 0.16) {
+            const p = timeSinceWordStart / 0.16;
+            wordScale = 0.76 + 0.24 * Easing.easeOutBack(p, 2.2);
+            wordAlpha = Math.min(1, p * 2.5);
+          }
+
+          const isSpokenNow = (currentTime >= tok.startTime && currentTime <= tok.getEffectiveEndTime());
+          let wordColor;
+          if (tok.color) {
+            wordColor = tok.color;
+          } else if (item.isActive && isSpokenNow) {
+            wordColor = accentColor;
+          } else if (item.isActive && (tok.emphasis === 'keyword' || tok.emphasis === 'cta' || tok.emphasis === 'hero')) {
+            wordColor = accentColor;
+          } else {
+            wordColor = primaryColor;
+          }
+
+          wordStates.push({
+            token: tok,
+            text: wordText,
+            width: wordW,
+            scale: wordScale,
+            alpha: wordAlpha * item.opacity,
+            color: wordColor,
+            isSpokenNow
+          });
+
+          totalLineWidth += wordW + spaceW;
+        }
+
+        if (wordStates.length === 0) continue;
+        totalLineWidth -= spaceW;
+
+        let curX = cx - totalLineWidth / 2;
+
+        for (let w = 0; w < wordStates.length; w++) {
+          const ws = wordStates[w];
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, Math.min(1, ws.alpha));
+
+          const wordCenterX = curX + ws.width / 2;
+          ctx.translate(wordCenterX, lineY);
+
+          if (ws.scale !== 1.0) {
+            ctx.scale(ws.scale, ws.scale);
+          }
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          // Stroke & Outline
+          const stroke = settings.stroke;
+          const strokeWidth = (stroke && stroke.enabled && stroke.width > 0) ?
+            stroke.width : Math.max(3.5, Math.round(fontSize * 0.075));
+          const strokeColor = (stroke && stroke.enabled && stroke.color) ? stroke.color : '#000000';
+
+          // Shadow
+          const shadow = settings.shadow;
+          if (shadow && shadow.enabled) {
+            ctx.shadowColor = shadow.color || 'rgba(0,0,0,0.85)';
+            ctx.shadowBlur = shadow.blur || 14;
+            ctx.shadowOffsetX = shadow.offsetX || 2;
+            ctx.shadowOffsetY = shadow.offsetY || 4;
+          } else {
+            ctx.shadowColor = 'rgba(0,0,0,0.85)';
+            ctx.shadowBlur = Math.max(8, Math.round(fontSize * 0.14));
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = Math.max(2, Math.round(fontSize * 0.04));
+          }
+
+          ctx.lineWidth = strokeWidth;
+          ctx.strokeStyle = strokeColor;
+          ctx.lineJoin = 'round';
+          ctx.miterLimit = 2;
+          ctx.strokeText(ws.text, 0, 0);
+
+          // Fill Text (Gradient support)
+          let fillStyle = ws.color;
+          if (typeof ws.color === 'object' && ws.color.top && ws.color.bottom) {
+            const grad = ctx.createLinearGradient(0, -fontSize * 0.45, 0, fontSize * 0.45);
+            grad.addColorStop(0, ws.color.top);
+            grad.addColorStop(1, ws.color.bottom);
+            fillStyle = grad;
+          }
+          ctx.fillStyle = fillStyle;
+          ctx.fillText(ws.text, 0, 0);
+
+          ctx.filter = 'none';
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.restore();
+
+          curX += ws.width + spaceW;
+        }
+      }
+    }
+  }
+}
+
+// Style 11: Static Title / Hook Card with Corner Accents & Underline Swash
+class HookCardStyle {
+  getState(token, currentTime, allTokens, W, H, settings) {
+    const { cx, cy } = getBaseCoordinates(W, H, settings);
+    return {
+      x: cx,
+      y: cy,
+      scale: 1.0,
+      rotation: 0,
+      opacity: 1.0,
+      blur: 0,
+      color: token.color || settings.colors.primary || '#ffffff',
+      fontSize: settings.font.size || 88,
+      visible: true
+    };
+  }
+
+  render(ctx, currentTime, tokens, W, H, settings) {
+    if (!tokens || tokens.length === 0) return;
+
+    const { cx, cy } = getBaseCoordinates(W, H, settings);
+    const baseFontSize = settings.font.size || 88;
+    const fontFamily = settings.font.family || 'Inter';
+    const fontWeight = settings.font.weight || 900;
+    const uppercase = !!settings.uppercase;
+    const accentColor = settings.colors.accent || '#ffd600';
+    const primaryColor = settings.colors.primary || '#ffffff';
+
+    const enterT = Math.min(1, Math.max(0, currentTime / 0.38));
+    const enterScale = 0.82 + 0.18 * Easing.easeOutBack(enterT, 1.8);
+    const enterAlpha = Math.min(1, enterT * 2.2);
+
+    const lines = [];
+    let curLine = [];
+    for (let i = 0; i < tokens.length; i++) {
+      curLine.push(tokens[i]);
+      if (curLine.length >= 3 || i === tokens.length - 1) {
+        lines.push(curLine);
+        curLine = [];
+      }
+    }
+
+    ctx.save();
+    ctx.globalAlpha = enterAlpha;
+    ctx.translate(cx, cy);
+    if (enterScale !== 1.0) ctx.scale(enterScale, enterScale);
+
+    ctx.font = `${fontWeight} ${baseFontSize}px "${fontFamily}", "Inter", -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const lineHeight = baseFontSize * 1.25;
+    const totalH = lines.length * lineHeight;
+    let startY = -totalH / 2 + lineHeight / 2;
+    let maxLineW = 0;
+
+    for (const line of lines) {
+      const lineText = uppercase ? line.map(t => t.text).join(' ').toUpperCase() : line.map(t => t.text).join(' ');
+      const w = ctx.measureText(lineText).width;
+      if (w > maxLineW) maxLineW = w;
+    }
+
+    const padX = 36;
+    const padY = 24;
+    const boxLeft = -maxLineW / 2 - padX;
+    const boxRight = maxLineW / 2 + padX;
+    const boxTop = -totalH / 2 - padY;
+    const boxBottom = totalH / 2 + padY;
+
+    this._drawSparkleStar(ctx, boxLeft, boxTop, accentColor, currentTime);
+    this._drawSparkleStar(ctx, boxRight, boxTop, accentColor, currentTime + 0.5);
+    this._drawSparkleStar(ctx, boxLeft, boxBottom, accentColor, currentTime + 1.0);
+    this._drawSparkleStar(ctx, boxRight, boxBottom, accentColor, currentTime + 1.5);
+
+    for (let l = 0; l < lines.length; l++) {
+      const line = lines[l];
+      const lineY = startY + l * lineHeight;
+      const spaceW = ctx.measureText(' ').width;
+
+      const words = [];
+      let fullW = 0;
+      for (const tok of line) {
+        let text = uppercase ? tok.text.toUpperCase() : tok.text;
+        const w = ctx.measureText(text).width;
+        words.push({ token: tok, text, width: w });
+        fullW += w + spaceW;
+      }
+      fullW -= spaceW;
+
+      let wordX = -fullW / 2;
+
+      for (const w of words) {
+        const wx = wordX + w.width / 2;
+        const color = w.token.color ||
+          ((w.token.emphasis === 'keyword' || w.token.emphasis === 'cta' || w.token.emphasis === 'hero') ? accentColor : primaryColor);
+
+        ctx.lineWidth = Math.max(4, baseFontSize * 0.08);
+        ctx.strokeStyle = '#000000';
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeText(w.text, wx, lineY);
+
+        ctx.shadowColor = 'rgba(0,0,0,0.85)';
+        ctx.shadowBlur = 14;
+        ctx.shadowOffsetY = 4;
+
+        ctx.fillStyle = color;
+        ctx.fillText(w.text, wx, lineY);
+
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        wordX += w.width + spaceW;
+      }
+
+      if (l === lines.length - 1) {
+        const swashY = lineY + baseFontSize * 0.58;
+        const swashW = Math.min(fullW * 1.05, maxLineW * 0.85);
+        ctx.beginPath();
+        ctx.moveTo(-swashW / 2, swashY);
+        ctx.quadraticCurveTo(0, swashY + 8, swashW / 2, swashY);
+        ctx.lineWidth = Math.max(5, baseFontSize * 0.075);
+        ctx.strokeStyle = accentColor;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  _drawSparkleStar(ctx, x, y, color, t) {
+    const pulse = 1.0 + 0.15 * Math.sin(t * 5);
+    const r = 16 * pulse;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(t * 1.5);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.quadraticCurveTo(0, 0, 0, r);
+    ctx.quadraticCurveTo(0, 0, -r, 0);
+    ctx.quadraticCurveTo(0, 0, 0, -r);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 // ============================================================
 //  6. MAIN FRAME RENDERER (With Stroke, Shadow, Box, & Gradients)
 // ============================================================
@@ -753,6 +1311,8 @@ class FrameRenderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.styles = {
+      karaokeStack: new KaraokeStackStyle(),
+      hookCard: new HookCardStyle(),
       perspective3d: new Perspective3DStyle(),
       kineticScroll: new KineticScrollStyle(),
       oneWord_slideUpBlur: new OneWordSlideUpBlurStyle(),
@@ -769,11 +1329,11 @@ class FrameRenderer {
   configure(settings) {
     this.settings = {
       tokens: settings.tokens || [],
-      style: settings.style || 'kineticScroll',
+      style: settings.style || 'karaokeStack',
       font: settings.font || { family: 'Inter', weight: 800, size: 84 },
-      colors: settings.colors || { primary: '#111111', accent: '#00e600' },
+      colors: settings.colors || { primary: '#ffffff', accent: '#ffd600' },
       background: settings.background || { type: 'offwhite', grain: 0, vignette: 0 },
-      verticalAlign: settings.verticalAlign || 'center',
+      verticalAlign: settings.verticalAlign || 'bottom',
       yOffset: settings.yOffset || 0,
       xOffset: settings.xOffset || 0,
       width: settings.width || 1080,
@@ -782,8 +1342,8 @@ class FrameRenderer {
       letterSpacing: settings.letterSpacing || 0,
 
       // Effects: Shadow, Stroke & Subtitle Box
-      shadow: settings.shadow || { enabled: false, color: 'rgba(0,0,0,0.8)', blur: 12, offsetX: 3, offsetY: 4 },
-      stroke: settings.stroke || { enabled: false, color: '#000000', width: 6 },
+      shadow: settings.shadow || { enabled: true, color: 'rgba(0,0,0,0.85)', blur: 14, offsetX: 2, offsetY: 4 },
+      stroke: settings.stroke || { enabled: true, color: '#000000', width: 5 },
       box: settings.box || { enabled: false, color: 'rgba(0,0,0,0.7)', radius: 10, paddingX: 20, paddingY: 10 }
     };
 
@@ -807,6 +1367,13 @@ class FrameRenderer {
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = 'source-over';
     BackgroundRenderer.render(ctx, width, height, background);
+
+    // If active style has a dedicated multi-line stack/card render method, execute it!
+    const activeStyleInstance = this.styles[style];
+    if (activeStyleInstance && typeof activeStyleInstance.render === 'function') {
+      activeStyleInstance.render(ctx, currentTime, tokens, width, height, this.settings);
+      return;
+    }
 
     // 2. Compute state for all tokens (Support Multi-Motion Remix & per-token style overrides)
     const remixStyles = ['oneWord_slideUpBlur', 'oneWord_scalePop', 'oneWord_depthZoom', 'oneWord_punchExpand', 'oneWord_dropBounce'];
