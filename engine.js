@@ -299,9 +299,11 @@ const BackgroundRenderer = {
     const video = settings.videoElement;
     const image = settings.imageElement;
 
-    if (video && video.readyState >= 2) {
-      this._drawImageCover(ctx, video, width, height);
-      const dim = typeof settings.overlayDim === 'number' ? settings.overlayDim : 0.35;
+    if (video) {
+      if (video.videoWidth > 0 || video.readyState >= 1) {
+        this._drawImageCover(ctx, video, width, height);
+      }
+      const dim = (typeof settings.overlayDim === 'number' && settings.overlayDim > 0) ? settings.overlayDim : 0;
       if (dim > 0) {
         ctx.fillStyle = `rgba(0, 0, 0, ${dim})`;
         ctx.fillRect(0, 0, width, height);
@@ -309,9 +311,11 @@ const BackgroundRenderer = {
       return;
     }
 
-    if (image && image.complete && image.naturalWidth > 0) {
-      this._drawImageCover(ctx, image, width, height);
-      const dim = typeof settings.overlayDim === 'number' ? settings.overlayDim : 0.3;
+    if (image) {
+      if (image.complete && image.naturalWidth > 0) {
+        this._drawImageCover(ctx, image, width, height);
+      }
+      const dim = (typeof settings.overlayDim === 'number' && settings.overlayDim > 0) ? settings.overlayDim : 0;
       if (dim > 0) {
         ctx.fillStyle = `rgba(0, 0, 0, ${dim})`;
         ctx.fillRect(0, 0, width, height);
@@ -768,7 +772,7 @@ class FrameRenderer {
       style: settings.style || 'kineticScroll',
       font: settings.font || { family: 'Inter', weight: 800, size: 84 },
       colors: settings.colors || { primary: '#111111', accent: '#00e600' },
-      background: settings.background || { type: 'offwhite', grain: 0.2, vignette: 0.15 },
+      background: settings.background || { type: 'offwhite', grain: 0, vignette: 0 },
       verticalAlign: settings.verticalAlign || 'center',
       yOffset: settings.yOffset || 0,
       xOffset: settings.xOffset || 0,
@@ -793,8 +797,15 @@ class FrameRenderer {
     const { width, height, tokens, style, background, font, uppercase, letterSpacing, shadow, stroke, box } = this.settings;
     const ctx = this.ctx;
 
-    // 1. Background
+    // 1. Pristine Background (Clean state so text shadows never leak into background video)
     ctx.clearRect(0, 0, width, height);
+    ctx.filter = 'none';
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.globalAlpha = 1.0;
+    ctx.globalCompositeOperation = 'source-over';
     BackgroundRenderer.render(ctx, width, height, background);
 
     // 2. Compute state for all tokens (Support Multi-Motion Remix & per-token style overrides)
@@ -893,6 +904,8 @@ class FrameRenderer {
       } else {
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
       }
 
       // APPLY STROKE / OUTLINE (if enabled)
@@ -918,6 +931,10 @@ class FrameRenderer {
       }
 
       ctx.filter = 'none';
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
       ctx.restore();
     }
   }
